@@ -1,0 +1,19 @@
+[package]
+name = "order-book"
+version = "0.1.0"
+edition = "2021"
+description = "Local limit order book with price-time-id priority"
+
+[lib]
+name = "order_book"
+
+[dependencies]
+
+[dev-dependencies]
+criterion = "0.5"
+rand = "0.8"
+rand_distr = "0.4"
+
+[[bench]]
+name = "order_book"
+harness = false
