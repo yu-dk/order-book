@@ -43,9 +43,9 @@ Resting orders are ordered by:
 
 Three implementations of `OrderBook` live in `src/store`:
 
-**Baseline: `btree.rs`.** One `BTreeSet` of whole orders per side, sorted by (price, timestamp, id), plus a `HashMap<OrderId, Locator>` that keeps each order's side, price and timestamp so it can be found in its set in O(log n). We used Rust's `BTreeMap` instead of red-black binary tree.
+**Baseline: `btree.rs`.** One `BTreeMap<(price, timestamp, id), Order>` per side (bids use `Reverse(price)`), plus a `HashMap<OrderId, Locator>` that keeps each order's side, price and timestamp so its key can be rebuilt and it can be removed in O(log n). We used Rust's B-tree instead of red-black binary tree.
 
-**Price-level stores.** When n is large, the tree gets deeper and its nodes no longer fit in L1/L2 cache, so each jump between nodes gets expensive. The next two implementations first find the order's price level, then work on the m orders queued at that price. Both keep each price's queue as a `BTreeMap` keyed by (timestamp, id), and store orders inside the queue.
+**Price-level stores.** We tested two other implementations to see whether splitting the book by price beats one big tree at large n., grouping by price also suits common order-book queries such as best price and per-level totals (not benchmarked here). It first finds the order's price level, then works on the m orders queued there, in a `BTreeMap` keyed by (timestamp, id) that holds the orders themselves.
 
 - `bucket_map.rs`: per side, queues live in a `HashMap<PriceIdx, Queue>`, and a hierarchical bitset over the whole price grid keeps prices in order. Insert/remove/update cost O(log m), independent of L, the number of live prices.
 - `level_map.rs`: per side, queues live in a `BTreeMap<PriceIdx, Queue>`, which keeps prices in order by itself. Insert/remove/update cost O(log L + log m).
