@@ -15,6 +15,9 @@ O(log m), m the number of orders at one price (m <= n): `_uniform` and
 and prove nothing about log(m), so those three panels draw `_hot` only, where
 m = n/32 scales with n and the log2(n) x axis doubles as a log2(m) axis up to
 that constant offset. The title says as much.
+
+Also writes plots/compare.png with every store in STORES overlaid (uniform +
+normal), including level_map, which has no per-store plot.
 """
 
 from __future__ import annotations
@@ -39,8 +42,8 @@ SIZES = (1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 2_000_000)  # SIZES i
 LINEAR_TICKS = (4_000, 64_000, 1_024_000, 2_000_000)  # sparser labels for linear-axis panels (all SIZES still plotted)
 WORKLOADS = ("uniform", "normal", "hot")
 COMPARISON_WORKLOADS = ("uniform", "normal")  # _hot excluded: this plot compares stores, not m vs n
-STORES = ("btree", "bucket_map")
-STORE_COLOR = {"btree": "#1b6ca8", "bucket_map": "#d95f02"}  # compare.png: color = implementation
+STORES = ("btree", "bucket_map", "level_map")
+STORE_COLOR = {"btree": "#1b6ca8", "bucket_map": "#d95f02", "level_map": "#2a9d55"}  # compare.png: color = implementation
 WORKLOAD_MARKER = {"uniform": "o", "normal": "s"}  # compare.png: marker shape = price distribution
 GROUP = re.compile(r"^(insert|update_quantity_only|remove|bids|asks)_(uniform|normal|hot)$")
 
@@ -62,6 +65,12 @@ PANELS = {
         ("remove: O(log m)", "log m", ("remove",), ("hot",)),
         ("bids: O(n)", "n", ("bids",), WORKLOADS),
     ),
+}
+
+# Figure title per store.
+SUPTITLE = {
+    "btree": "btree",
+    "bucket_map": "bucket_map (hot_dist, m = n/32)",
 }
 
 
@@ -88,7 +97,7 @@ def load_points(store: str) -> dict[tuple[str, str], list[tuple[int, float]]]:
 
 
 def load_comparison_points() -> dict[tuple[str, str, str], list[tuple[int, float]]]:
-    """(op, workload, store) -> [(n, median ns)] sorted by n, for both stores."""
+    """(op, workload, store) -> [(n, median ns)] sorted by n, for every store."""
     points: dict[tuple[str, str, str], list[tuple[int, float]]] = defaultdict(list)
     for store in STORES:
         for estimates in CRITERION.glob(f"*/{store}/*/new/estimates.json"):
@@ -112,10 +121,10 @@ def load_comparison_points() -> dict[tuple[str, str, str], list[tuple[int, float
 
 # Comparison subplots: (title, operations drawn in it)
 COMPARISON_PANELS = (
-    ("update_quantity_only: btree O(1) vs bucket_map O(log m)", ("update_quantity_only",)),
-    ("insert: btree O(log n) vs bucket_map O(log m)", ("insert",)),
-    ("remove: btree O(log n) vs bucket_map O(log m)", ("remove",)),
-    ("bids: O(n) for both", ("bids",)),
+    ("update_quantity_only: btree O(1), bucket_map O(log m),\nlevel_map O(log L + log m)", ("update_quantity_only",)),
+    ("insert: btree O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("insert",)),
+    ("remove: btree O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("remove",)),
+    ("bids: O(n) for all", ("bids",)),
 )
 
 
@@ -147,14 +156,14 @@ def draw_comparison_panel(ax, title: str, ops: tuple[str, ...], points: dict[tup
 
 
 def plot_comparison() -> bool:
-    """Writes plots/compare.png: btree vs bucket_map overlaid, uniform + normal only."""
+    """Writes plots/compare.png: every store overlaid, uniform + normal only."""
     points = load_comparison_points()
     if not points:
         return False
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     for ax, (title, ops) in zip(axes.flat, COMPARISON_PANELS):
         draw_comparison_panel(ax, title, ops, points)
-    fig.suptitle("btree vs bucket_map (uniform & normal workloads)")
+    fig.suptitle(f"{' vs '.join(STORES)} (uniform & normal workloads)")
     fig.tight_layout()
     dest = OUT_DIR / "compare.png"
     fig.savefig(dest, dpi=150)
@@ -199,7 +208,7 @@ def plot_store(store: str) -> bool:
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     for ax, (title, complexity, ops, workloads) in zip(axes.flat, PANELS[store]):
         draw_panel(ax, title, complexity, ops, workloads, points)
-    fig.suptitle("bucket_map (hot_dist, m = n/32)" if store == "bucket_map" else store)
+    fig.suptitle(SUPTITLE[store])
     fig.tight_layout()
     dest = OUT_DIR / f"{store}.png"
     fig.savefig(dest, dpi=150)

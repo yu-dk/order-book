@@ -23,7 +23,7 @@ O = I \times S \times P \times Q \times T
 | \(Q\) | Quantity | \(\tfrac{1}{10^{6}}\mathbb{N}_{>0}\) |
 | \(T\) | Timestamp | \(\mathbb{N}_0\) |
 
-Prices and quantities are discrete, not floating-point money. The tick sizes are constants (`PRICE_TICK_DENOMINATOR = 1000`, `QUANTITY_TICK_DENOMINATOR = 10^6`). Price is stored as milli-ticks in \([-9\,999\,999, 9\,999\,999]\) — the open interval \((-10000, 10000)\) — and quantity as a positive count of \(10^{-6}\) units.
+Prices and quantities are discrete, not floating-point money. The tick sizes are constants (`PRICE_TICK_DENOMINATOR = 1000`, `QUANTITY_TICK_DENOMINATOR = 10^6`). Price is stored as an integer number of 0.001 ticks in \([-9\,999\,999, 9\,999\,999]\) — the open interval \((-10000, 10000)\) — and quantity as a positive count of \(10^{-6}\) units.
 
 The store must support:
 
@@ -41,16 +41,29 @@ Resting orders are ordered by:
 
 ### Implementations
 
-Two implementations of `OrderBook` live in `src/store`:
+Three implementations of `OrderBook` live in `src/store`:
 
-- `btree.rs` — the baseline. One `BTreeSet` per side, plus a `HashMap<OrderId, Order>` for O(1) lookup by id. Every insert/remove/reprice costs O(log n) over all orders on that side.
-- `bucket_map.rs` — the more advanced store. One small `BTreeMap` queue per price level, found through a bitset over the price grid. Insert/remove/reprice cost O(log m), where m is the number of orders at that price, independent of how many price levels or total orders exist.
+**Baseline: `btree.rs`.** One `BTreeSet` per side, keyed by (price, timestamp, id), plus a `HashMap<OrderId, Order>` for O(1) lookup by id. Every insert/remove/reprice costs O(log n) over all orders on that side. Rust's `BTreeMap`/`BTreeSet` is a B-tree, not a red-black binary tree: each node except the root holds 5–11 keys (6–12 children). Wide nodes mean fewer levels, and every level is a pointer jump that can miss the cache.
 
-Both implementations satisfy the same trait, so they can be swapped in and checked against each other. A few implementation tradeoffs are highlighted in inline comments starting with `// TRADEOFF`.
+**Price-level stores.** When n is large, the tree gets deeper and its nodes no longer fit in L1/L2 cache, so each jump between nodes gets expensive. The next two implementations first find the order's price level, then work on the m orders queued at that price. Both keep each price's queue as a `BTreeMap` keyed by (timestamp, id), and store orders inside the queue.
+
+- `bucket_map.rs`: per side, queues live in a `HashMap<PriceIdx, Queue>`, and a hierarchical bitset over the whole price grid keeps prices in order. Insert/remove/reprice cost O(log m), independent of L, the number of live prices.
+- `level_map.rs`: per side, queues live in a `BTreeMap<PriceIdx, Queue>`, which keeps prices in order by itself. Insert/remove/reprice cost O(log L + log m).
+
+How the two price-level stores differ:
+
+| | `bucket_map` | `level_map` |
+| --- | --- | --- |
+| Find a price's queue | `HashMap` lookup, O(1) | tree search, O(log L) |
+| Price order for reads | bitset (set/clear a bit, find next set bit) | the map's own key order |
+| Reads to find the next non-empty price | 5 levels of the ~20M-price bitset. 1–9 word reads: up, then down | first price: 4–5 nodes for L = 6,000; each next price: O(1) on average |
+| Structures to keep in sync | id index, queue `HashMap` and bitset | id index and one map (simpler) |
+
+All implementations satisfy the same trait, so they can be swapped in and checked against each other.
 
 ### Tests
 
-Unit tests (a shared behavioral suite plus per-implementation white-box tests) live in `src/store/mod.rs`, `src/store/btree.rs` and `src/store/bucket_map.rs`. An integration test replaying a realistic order stream against both stores is in `tests/stream.rs`.
+Unit tests (a shared behavioral suite plus per-implementation white-box tests) live in `src/store/mod.rs`, `src/store/btree.rs`, `src/store/bucket_map.rs` and `src/store/level_map.rs`. An integration test replaying a realistic order stream against every store is in `tests/stream.rs`.
 
 ```sh
 cargo test
@@ -58,7 +71,7 @@ cargo test
 
 ### Benches
 
-To verify the theoretical time complexity of each operation, we use Rust's benchmark harness to run experiments.
+To verify the theoretical time complexity of each operation, we use Criterion to run experiments.
 
 See [BENCHMARKS.md](benches/BENCHMARKS.md) for details. Benchmark plots are in `plots/*.png`.
 

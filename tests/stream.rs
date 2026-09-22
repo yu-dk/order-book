@@ -1,10 +1,10 @@
-//! Integration test: replay a stream of operations on both stores and check
+//! Integration test: replay a stream of operations on every store and check
 //! the resulting book. To watch the book change step by step, run:
 //!
 //!     cargo test --test stream -- --nocapture
 
 use order_book::{
-    BTreeOrderStore, BookError, BucketMapOrderStore, Order, OrderBook, OrderId, Price, Quantity, Side,
+    BTreeOrderStore, BookError, BucketMapOrderStore, LevelMapOrderStore, Order, OrderBook, OrderId, Price, Quantity, Side,
 };
 
 // ---------------------------------------------------------------- the stream
@@ -46,6 +46,12 @@ fn replay_on_btree_store() {
 #[test]
 fn replay_on_bucket_map_store() {
     let book = replay::<BucketMapOrderStore>("BucketMapOrderStore");
+    assert_eq!((ids(book.bids()), ids(book.asks())), (FINAL_BIDS.to_vec(), FINAL_ASKS.to_vec()));
+}
+
+#[test]
+fn replay_on_level_map_store() {
+    let book = replay::<LevelMapOrderStore>("LevelMapOrderStore");
     assert_eq!((ids(book.bids()), ids(book.asks())), (FINAL_BIDS.to_vec(), FINAL_ASKS.to_vec()));
 }
 

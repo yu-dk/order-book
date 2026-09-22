@@ -22,11 +22,11 @@ use crate::types::{Order, OrderId, Price, Side, Timestamp};
 const PRICE_SPAN: usize = (Price::MAX_TICKS as i64 - Price::MIN_TICKS as i64 + 1) as usize;
 
 /// Position of a price on one side; 0 is the best price (see `price_index`).
-type PriceIdx = u32;
+pub(super) type PriceIdx = u32;
 
 /// Maps a price to its position on `side`, so index 0 is always the best
 /// price: lowest for sells, highest for buys.
-fn price_index(side: Side, price: Price) -> PriceIdx {
+pub(super) fn price_index(side: Side, price: Price) -> PriceIdx {
     match side {
         Side::Sell => (price.ticks() - Price::MIN_TICKS) as u32,
         Side::Buy => (Price::MAX_TICKS - price.ticks()) as u32,

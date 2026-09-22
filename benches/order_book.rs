@@ -4,7 +4,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
     measurement::WallTime,
 };
-use order_book::{BTreeOrderStore, BucketMapOrderStore, Order, OrderBook, Price, Quantity, Side};
+use order_book::{BTreeOrderStore, BucketMapOrderStore, LevelMapOrderStore, Order, OrderBook, Price, Quantity, Side};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use rand_distr::{Distribution, Normal};
 use std::num::NonZeroU64;
@@ -228,6 +228,7 @@ fn bench_all(c: &mut Criterion) {
     for w in WORKLOADS {
         bench_store::<BTreeOrderStore>(c, "btree", w);
         bench_store::<BucketMapOrderStore>(c, "bucket_map", w);
+        bench_store::<LevelMapOrderStore>(c, "level_map", w);
     }
 }
 

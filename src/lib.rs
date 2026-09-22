@@ -11,7 +11,7 @@ pub mod types;
 
 pub use order_book::OrderBook;
 pub use error::BookError;
-pub use store::{BTreeOrderStore, BucketMapOrderStore};
+pub use store::{BTreeOrderStore, BucketMapOrderStore, LevelMapOrderStore};
 pub use types::{
     Order, OrderId, Price, Quantity, Side, Timestamp, PRICE_ABS_BOUND, PRICE_DECIMALS,
     PRICE_TICK_DENOMINATOR, QUANTITY_DECIMALS, QUANTITY_TICK_DENOMINATOR,

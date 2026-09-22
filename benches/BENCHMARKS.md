@@ -2,7 +2,7 @@
 
 ## Setup
 
-Each benchmark runs on a preloaded book of \(n \in \{1000, 4000, 16000, 64000, 256000, 1024000, 2000000\}\) orders(warm cache), for `btree` and `bucket_map`, with three price distributions:
+Each benchmark runs on a preloaded book of \(n \in \{1000, 4000, 16000, 64000, 256000, 1024000, 2000000\}\) orders(warm cache), for `btree`, `bucket_map` and `level_map`, with three price distributions:
 
 - `_uniform` — orders spread uniformly at random over 6,000 prices.
 - `_normal` — prices are normal (mean 100, sigma 1,000 ticks), so the book is dense near the mean and thin in the tails. 3σ (99.7%) covers about 6,000 distinct ticks, close to real usage.
@@ -22,6 +22,7 @@ Each benchmark runs on a preloaded book of \(n \in \{1000, 4000, 16000, 64000, 2
 cargo bench
 cargo bench --bench order_book -- /btree/
 cargo bench --bench order_book -- /bucket_map/
+cargo bench --bench order_book -- /level_map/
 ```
 
 The filter is a regex, so it can also pick one operation, workload or size, for example `-- "^insert_.*/bucket_map/"` or `-- "_hot/bucket_map/64000"`. `-- --list` shows what would run. 
@@ -38,15 +39,15 @@ That reads `target/criterion/<op>_<workload>/<store>/<n>/new/estimates.json` and
 
 ## Time complexity
 
-\(n\) is the number of orders in the book, \(m\) the number of orders at one price. Hash map lookups are \(O(1)\) (expected) and are included in every cost.
+\(n\) is the number of orders in the book, \(m\) the number of orders at one price, \(L\) the number of prices that have orders. Hash map lookups are \(O(1)\) (expected) and are included in every cost.
 
-| Operation | `btree` | `bucket_map` |
-|---|---|---|
-| `insert` | \(O(\log n)\) | \(O(\log m)\) |
-| `update` (side, price or timestamp changes) | \(O(\log n)\) | \(O(\log m)\) |
-| `update` (only the quantity changes) | \(O(1)\) | \(O(\log m)\) |
-| `remove` | \(O(\log n)\) | \(O(\log m)\) |
-| `bids` / `asks` | \(O(n)\) | \(O(n)\) |
+| Operation | `btree` | `bucket_map` | `level_map` |
+|---|---|---|---|
+| `insert` | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
+| `update` (side, price or timestamp changes) | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
+| `update` (only the quantity changes) | \(O(1)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
+| `remove` | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
+| `bids` / `asks` | \(O(n)\) | \(O(n)\) | \(O(n)\) |
 
 - In `_hot`, \(m = n/32\) exactly, so \(\log m\) tracks \(\log n\) closely — that workload exists specifically to make `bucket_map`'s \(\log m\) curve visible (see `plots/bucket_map.png`).
 
