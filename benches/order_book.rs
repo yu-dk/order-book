@@ -127,14 +127,16 @@ fn bench_insert<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Work
     group.finish();
 }
 
-/// Update, quantity only: each batch times `BATCH_SIZE` updates of random live orders that change only the quantity.
-/// A price or timestamp change is a remove plus an insert, which are benchmarked on their own.
-fn bench_update_quantity_only<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Workload) {
-    let mut group = group(c, &format!("update_quantity_only{}", w.suffix));
+/// Update quantity: each batch times `BATCH_SIZE` updates of random live orders that keep side and price
+/// but change the quantity. An update always carries a new timestamp, so each one moves its order to the back of its queue.
+fn bench_update_quantity<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Workload) {
+    let mut group = group(c, &format!("update_quantity{}", w.suffix));
     for &order_size in SIZES {
         let mut book: B = preload(order_size, w.order);
         let mut rng = StdRng::seed_from_u64(order_size);
         let mut quantity = 2; // differs from the preloaded quantity of 1
+        // Later than every preloaded timestamp (at most order_size + 64 headroom + 64 hot shift).
+        let mut timestamp = order_size + 128;
         group.bench_with_input(BenchmarkId::new(store, order_size), &order_size, |b, _| {
             b.iter_custom(|iters| {
                 let mut total = Duration::ZERO;
@@ -144,8 +146,9 @@ fn bench_update_quantity_only<B: OrderBook + Default>(c: &mut Criterion, store: 
                     let orders: Vec<Order> = (0..k)
                         .map(|_| {
                             quantity += 1;
+                            timestamp += 1;
                             let id = rng.gen_range(1..=order_size);
-                            Order { quantity: Quantity::from_ticks(quantity).unwrap(), ..(w.order)(id) }
+                            Order { quantity: Quantity::from_ticks(quantity).unwrap(), timestamp, ..(w.order)(id) }
                         })
                         .collect();
                     let start = Instant::now();
@@ -218,7 +221,7 @@ fn bench_asks<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Worklo
 
 fn bench_store<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Workload) {
     bench_insert::<B>(c, store, w);
-    bench_update_quantity_only::<B>(c, store, w);
+    bench_update_quantity::<B>(c, store, w);
     bench_remove::<B>(c, store, w);
     bench_bids::<B>(c, store, w);
     bench_asks::<B>(c, store, w);

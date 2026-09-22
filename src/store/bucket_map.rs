@@ -8,7 +8,7 @@
 //! | Op | Cost |
 //! | --- | --- |
 //! | `insert` / `remove` | O(log m), m = orders at that price |
-//! | `update` | O(log m) whether or not the order moves |
+//! | `update` | O(log m): remove plus insert |
 //! | `bids` / `asks` | O(k) for k orders returned |
 
 use std::collections::{BTreeMap, HashMap};
@@ -132,22 +132,8 @@ impl OrderBook for BucketMapOrderStore {
     }
 
     fn update(&mut self, order: Order) -> Result<(), BookError> {
-        let loc = *self.index.get(&order.id).ok_or(BookError::UnknownId(order.id))?;
-        let same_place = order.side == loc.side
-            && price_index(order.side, order.price) == loc.price_idx
-            && order.timestamp == loc.timestamp;
-        if same_place {
-            // Only the quantity can differ, so the entry keeps its place.
-            let entry = self
-                .side_mut(loc.side)
-                .queues
-                .get_mut(&loc.price_idx)
-                .and_then(|q| q.get_mut(&(loc.timestamp, order.id)))
-                .expect("indexed order is queued");
-            *entry = order;
-            return Ok(());
-        }
-        self.unlink(order.id);
+        // An update always carries a new timestamp, so the order always moves.
+        self.unlink(order.id).ok_or(BookError::UnknownId(order.id))?;
         self.link(order);
         Ok(())
     }
@@ -195,16 +181,5 @@ mod tests {
         s.insert(order(2, Side::Buy, 100, 2)).unwrap();
         assert_eq!(s.bids().len(), 1);
         assert_eq!(s.bids.queues.len(), 1, "the kept queue was reused");
-    }
-
-    #[test]
-    fn update_quantity_only_keeps_place() {
-        let mut s = BucketMapOrderStore::new();
-        s.insert(order(1, Side::Buy, 100, 1)).unwrap();
-        s.insert(order(2, Side::Buy, 100, 2)).unwrap();
-        let mut changed = order(1, Side::Buy, 100, 1);
-        changed.quantity = Quantity::from_ticks(7).unwrap();
-        s.update(changed.clone()).unwrap();
-        assert_eq!(s.bids(), [&changed, &order(2, Side::Buy, 100, 2)]);
     }
 }

@@ -175,17 +175,6 @@ mod tests {
                     assert_eq!(b.asks(), [&moved]);
                 }
 
-                #[test]
-                fn update_quantity_only_keeps_position() {
-                    let mut b = book();
-                    b.insert(order(1, Side::Buy, 100, 0)).unwrap();
-                    b.insert(order(2, Side::Buy, 100, 1)).unwrap();
-                    let mut changed = order(1, Side::Buy, 100, 0);
-                    changed.quantity = Quantity::from_ticks(7).unwrap();
-                    b.update(changed.clone()).unwrap();
-                    assert_eq!(ids(b.bids()), [1, 2]);
-                    assert_eq!(b.bids()[0], &changed);
-                }
 
                 #[test]
                 fn emptied_level_is_forgotten() {

@@ -3,13 +3,13 @@
 
 Writes plots/btree.png and plots/bucket_map.png: one subplot per operation,
 titled with its time complexity. The median time in microseconds is plotted
-against the book size n. O(1) and O(n) subplots use linear axes, so the
+against the book size n. O(n) subplots use linear axes, so the
 distance between sizes is proportional to n. O(log n) and O(log m) subplots
 plot log2(n) on the x axis instead, so a true logarithmic cost is a straight
 line.
 
 Most subplots draw all three workloads (uniform, normal, hot). The exception
-is bucket_map's insert/remove/update_quantity_only, whose true cost is
+is bucket_map's insert/remove/update_quantity, whose true cost is
 O(log m), m the number of orders at one price (m <= n): `_uniform` and
 `_normal` keep m at about 1 to 6 regardless of n, which would just look flat
 and prove nothing about log(m), so those three panels draw `_hot` only, where
@@ -45,7 +45,7 @@ COMPARISON_WORKLOADS = ("uniform", "normal")  # _hot excluded: this plot compare
 STORES = ("btree", "bucket_map", "level_map")
 STORE_COLOR = {"btree": "#1b6ca8", "bucket_map": "#d95f02", "level_map": "#2a9d55"}  # compare.png: color = implementation
 WORKLOAD_MARKER = {"uniform": "o", "normal": "s"}  # compare.png: marker shape = price distribution
-GROUP = re.compile(r"^(insert|update_quantity_only|remove|bids|asks)_(uniform|normal|hot)$")
+GROUP = re.compile(r"^(insert|update_quantity|remove|bids|asks)_(uniform|normal|hot)$")
 
 WORKLOAD_COLOR = {"uniform": "#1b6ca8", "normal": "#d95f02", "hot": "#2a9d55"}  # btree.png / bucket_map.png: color = workload
 OP_STYLE = {"bids": ("-", "o"), "asks": ("--", "s")}  # ops that share a subplot; the rest use ("-", "o")
@@ -54,13 +54,13 @@ OP_LINESTYLE = {"bids": "-", "asks": "--"}  # compare.png: linestyle distinguish
 # Subplots per store: (title, complexity, operations drawn in it, workloads drawn in it)
 PANELS = {
     "btree": (
-        ("update_quantity_only: O(1)", "1", ("update_quantity_only",), WORKLOADS),
+        ("update_quantity: O(log n)", "log n", ("update_quantity",), WORKLOADS),
         ("insert: O(log n)", "log n", ("insert",), WORKLOADS),
         ("remove: O(log n)", "log n", ("remove",), WORKLOADS),
         ("bids: O(n)", "n", ("bids",), WORKLOADS),
     ),
     "bucket_map": (
-        ("update_quantity_only: O(log m)", "log m", ("update_quantity_only",), ("hot",)),
+        ("update_quantity: O(log m)", "log m", ("update_quantity",), ("hot",)),
         ("insert: O(log m)", "log m", ("insert",), ("hot",)),
         ("remove: O(log m)", "log m", ("remove",), ("hot",)),
         ("bids: O(n)", "n", ("bids",), WORKLOADS),
@@ -121,7 +121,7 @@ def load_comparison_points() -> dict[tuple[str, str, str], list[tuple[int, float
 
 # Comparison subplots: (title, operations drawn in it)
 COMPARISON_PANELS = (
-    ("update_quantity_only: btree O(1), bucket_map O(log m),\nlevel_map O(log L + log m)", ("update_quantity_only",)),
+    ("update_quantity: btree O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("update_quantity",)),
     ("insert: btree O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("insert",)),
     ("remove: btree O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("remove",)),
     ("bids: O(n) for all", ("bids",)),

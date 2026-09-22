@@ -1,23 +1,68 @@
-//! One `BTreeSet` per side, plus a `HashMap` from order id to order.
-//! 
-//! - Bids are keyed `(Reverse(price), timestamp, id)` and asks `(price,
-//!   timestamp, id)`.
+//! One `BTreeSet` of orders per side, plus a `HashMap` from order id to where
+//! the order sits.
+//!
+//! - Each set holds the orders themselves, sorted by `Order::cmp_book_priority`
+//!   (price best first, then timestamp, then id), so `bids` / `asks` read the
+//!   tree in order with no per-order lookup.
+//! - `index` keeps only the fields that sort an order, enough to rebuild a
+//!   probe that finds it in its set.
+//!
+//! | Op | Cost |
+//! | --- | --- |
+//! | `insert` / `remove` / `update` | O(log n), n = orders on that side |
+//! | `bids` / `asks` | O(k) for k orders returned |
 
-use std::cmp::Reverse;
+use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
 use crate::error::BookError;
 use crate::order_book::OrderBook;
-use crate::types::{Order, OrderId, Price, Side, Timestamp};
+use crate::types::{Order, OrderId, Price, Quantity, Side, Timestamp};
 
-type BidKey = (Reverse<Price>, Timestamp, OrderId);
-type AskKey = (Price, Timestamp, OrderId);
+/// An order in its side's set. Ordered by `cmp_book_priority`, which never
+/// looks at quantity, so a probe with any quantity finds the stored order.
+#[derive(Debug, Clone)]
+struct Entry(Order);
+
+impl Ord for Entry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.cmp_book_priority(&other.0)
+    }
+}
+
+impl PartialOrd for Entry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl PartialEq for Entry {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Entry {}
+
+/// Where an order lives: the fields `Entry` sorts by.
+#[derive(Debug, Clone, Copy)]
+struct Locator {
+    side: Side,
+    price: Price,
+    timestamp: Timestamp,
+}
+
+/// Placeholder quantity for probes; ignored by `Entry`'s ordering.
+const PROBE_QUANTITY: Quantity = match Quantity::from_ticks(1) {
+    Some(q) => q,
+    None => unreachable!(),
+};
 
 #[derive(Debug, Default, Clone)]
 pub struct BTreeOrderStore {
-    orders: HashMap<OrderId, Order>, // sole owner of the data.
-    bids: BTreeSet<BidKey>,
-    asks: BTreeSet<AskKey>,
+    index: HashMap<OrderId, Locator>,
+    bids: BTreeSet<Entry>,
+    asks: BTreeSet<Entry>,
 }
 
 impl BTreeOrderStore {
@@ -25,64 +70,60 @@ impl BTreeOrderStore {
         Self::default()
     }
 
-    fn link(&mut self, o: &Order) {
-        match o.side {
-            Side::Buy => self.bids.insert((Reverse(o.price), o.timestamp, o.id)),
-            Side::Sell => self.asks.insert((o.price, o.timestamp, o.id)),
-        };
+    fn side_mut(&mut self, side: Side) -> &mut BTreeSet<Entry> {
+        match side {
+            Side::Buy => &mut self.bids,
+            Side::Sell => &mut self.asks,
+        }
     }
 
-    fn unlink(&mut self, o: &Order) {
-        match o.side {
-            Side::Buy => self.bids.remove(&(Reverse(o.price), o.timestamp, o.id)),
-            Side::Sell => self.asks.remove(&(o.price, o.timestamp, o.id)),
-        };
+    /// Adds `order` to its side and records where it is.
+    fn link(&mut self, order: Order) {
+        let loc = Locator { side: order.side, price: order.price, timestamp: order.timestamp };
+        self.index.insert(order.id, loc);
+        self.side_mut(loc.side).insert(Entry(order));
+    }
+
+    /// Removes an order by id and returns it, or `None` if the id is unknown.
+    fn unlink(&mut self, id: OrderId) -> Option<Order> {
+        let loc = self.index.remove(&id)?;
+        let probe = Entry(Order {
+            id,
+            side: loc.side,
+            price: loc.price,
+            quantity: PROBE_QUANTITY,
+            timestamp: loc.timestamp,
+        });
+        let Entry(order) = self.side_mut(loc.side).take(&probe).expect("indexed order is in its set");
+        Some(order)
     }
 }
 
 impl OrderBook for BTreeOrderStore {
     fn insert(&mut self, order: Order) -> Result<(), BookError> {
-        if self.orders.contains_key(&order.id) {
+        if self.index.contains_key(&order.id) {
             return Err(BookError::DuplicateId(order.id));
         }
-        self.link(&order);
-        self.orders.insert(order.id, order);
+        self.link(order);
         Ok(())
     }
 
     fn update(&mut self, order: Order) -> Result<(), BookError> {
-        let slot = self
-            .orders
-            .get_mut(&order.id)
-            .ok_or(BookError::UnknownId(order.id))?;
-
-        // The index keys don't include quantity, so if side, price and
-        // timestamp are unchanged the existing index entry is still valid.
-        if slot.side == order.side
-            && slot.price == order.price
-            && slot.timestamp == order.timestamp
-        {
-            *slot = order;
-            return Ok(());
-        }
-
-        let old = std::mem::replace(slot, order.clone());
-        self.unlink(&old);
-        self.link(&order);
+        // An update always carries a new timestamp, so the order always moves.
+        self.unlink(order.id).ok_or(BookError::UnknownId(order.id))?;
+        self.link(order);
         Ok(())
     }
 
     fn remove(&mut self, id: OrderId) -> Result<Order, BookError> {
-        let old = self.orders.remove(&id).ok_or(BookError::UnknownId(id))?;
-        self.unlink(&old);
-        Ok(old)
+        self.unlink(id).ok_or(BookError::UnknownId(id))
     }
 
     fn bids(&self) -> Vec<&Order> {
-        self.bids.iter().map(|&(_, _, id)| &self.orders[&id]).collect()
+        self.bids.iter().map(|Entry(o)| o).collect()
     }
 
     fn asks(&self) -> Vec<&Order> {
-        self.asks.iter().map(|&(_, _, id)| &self.orders[&id]).collect()
+        self.asks.iter().map(|Entry(o)| o).collect()
     }
 }

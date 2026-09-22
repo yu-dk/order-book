@@ -13,7 +13,7 @@ Each benchmark runs on a preloaded book of \(n \in \{1000, 4000, 16000, 64000, 2
 | Operation | Group name | How it is timed |
 |---|---|---|
 | `insert` | `insert_<workload>` | Each batch times `BATCH_SIZE` inserts of fresh samples of the workload (new ids, so new prices), then cancels the `BATCH_SIZE` oldest orders |
-| `update` (quantity only) | `update_quantity_only_<workload>` | Each batch times `BATCH_SIZE` updates of random live orders that change only the quantity. A change of side, price or timestamp is a remove plus an insert, which is covered by other benchmarks. |
+| `update` | `update_quantity_<workload>` | Each batch times `BATCH_SIZE` updates of random live orders that keep side and price but change the quantity and get a new, later timestamp, so each order moves to the back of its queue. Every store handles an update as a remove plus an insert, whatever fields change, so this measures the full update cost. |
 | `remove` | `remove_<workload>` | Each batch times `BATCH_SIZE` cancels of the oldest orders, then inserts `BATCH_SIZE` fresh samples. |
 | `bids`, `asks` | `bids_<workload>`, `asks_<workload>` | One full read of that side of the book. |
 
@@ -44,13 +44,9 @@ That reads `target/criterion/<op>_<workload>/<store>/<n>/new/estimates.json` and
 | Operation | `btree` | `bucket_map` | `level_map` |
 |---|---|---|---|
 | `insert` | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
-| `update` (side, price or timestamp changes) | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
-| `update` (only the quantity changes) | \(O(1)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
+| `update` | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
 | `remove` | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
 | `bids` / `asks` | \(O(n)\) | \(O(n)\) | \(O(n)\) |
 
 - In `_hot`, \(m = n/32\) exactly, so \(\log m\) tracks \(\log n\) closely — that workload exists specifically to make `bucket_map`'s \(\log m\) curve visible (see `plots/bucket_map.png`).
-
-### Why `btree`'s `O(1)` update isn't flat at large \(n\)
-
-`update_quantity_only`'s fast path is one `HashMap` lookup and in-place write: genuinely \(O(1)\) in operation count. But each call picks a uniformly random id, so there's no cache locality — the *wall-clock* cost depends on whether that lookup hits cache. `HashMap<OrderId, Order>` is roughly 45 bytes/order — ~12 MB at \(n=256{,}000\), close to this machine's 16 MB L2 (Apple A18 Pro; no separate L3).
+- An update always carries a new timestamp, so it always moves the order: every store does a remove plus an insert, with no in-place fast path.

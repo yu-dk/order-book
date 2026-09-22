@@ -28,7 +28,7 @@ Prices and quantities are discrete, not floating-point money. The tick sizes are
 The store must support:
 
 - **`insert`** — add a new order; duplicate ids are rejected
-- **`update`** — if the id exists, replace \(S\), \(P\), \(Q\), and \(T\); priority follows the new values. Unknown ids error
+- **`update`** — if the id exists, replace \(S\), \(P\), \(Q\), and \(T\); priority follows the new values. An update always changes \(T\), so the order always loses its place in the queue and the stores implement it as a remove plus an insert. Unknown ids error
 - **`remove`** — cancel by id
 - **`bids` / `asks`** — return ordered orders on that side, the best bid and best ask are the first elements of those lists
 
@@ -43,12 +43,12 @@ Resting orders are ordered by:
 
 Three implementations of `OrderBook` live in `src/store`:
 
-**Baseline: `btree.rs`.** One `BTreeSet` per side, keyed by (price, timestamp, id), plus a `HashMap<OrderId, Order>` for O(1) lookup by id. Every insert/remove/reprice costs O(log n) over all orders on that side. Rust's `BTreeMap`/`BTreeSet` is a B-tree, not a red-black binary tree: each node except the root holds 5–11 keys (6–12 children). Wide nodes mean fewer levels, and every level is a pointer jump that can miss the cache.
+**Baseline: `btree.rs`.** One `BTreeSet` of whole orders per side, sorted by (price, timestamp, id), plus a `HashMap<OrderId, Locator>` that keeps each order's side, price and timestamp so it can be found in its set in O(log n). We used Rust's `BTreeMap` instead of red-black binary tree.
 
 **Price-level stores.** When n is large, the tree gets deeper and its nodes no longer fit in L1/L2 cache, so each jump between nodes gets expensive. The next two implementations first find the order's price level, then work on the m orders queued at that price. Both keep each price's queue as a `BTreeMap` keyed by (timestamp, id), and store orders inside the queue.
 
-- `bucket_map.rs`: per side, queues live in a `HashMap<PriceIdx, Queue>`, and a hierarchical bitset over the whole price grid keeps prices in order. Insert/remove/reprice cost O(log m), independent of L, the number of live prices.
-- `level_map.rs`: per side, queues live in a `BTreeMap<PriceIdx, Queue>`, which keeps prices in order by itself. Insert/remove/reprice cost O(log L + log m).
+- `bucket_map.rs`: per side, queues live in a `HashMap<PriceIdx, Queue>`, and a hierarchical bitset over the whole price grid keeps prices in order. Insert/remove/update cost O(log m), independent of L, the number of live prices.
+- `level_map.rs`: per side, queues live in a `BTreeMap<PriceIdx, Queue>`, which keeps prices in order by itself. Insert/remove/update cost O(log L + log m).
 
 How the two price-level stores differ:
 
