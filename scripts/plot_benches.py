@@ -2,16 +2,19 @@
 """Plot Criterion results from target/criterion/<op>_<workload>/<store>/<n>/new/estimates.json.
 
 Writes plots/btree.png and plots/bucket_map.png: one subplot per operation,
-titled with its time complexity, each with the three workloads (uniform,
-normal, hot). The median time in microseconds is plotted against the book
-size n. O(1), O(n) and O(log m) subplots use linear axes, so the distance
-between sizes is proportional to n. O(log n) subplots plot log2(n) on the x
-axis instead, so a true O(log n) cost is a straight line.
+titled with its time complexity. The median time in microseconds is plotted
+against the book size n. O(1) and O(n) subplots use linear axes, so the
+distance between sizes is proportional to n. O(log n) and O(log m) subplots
+plot log2(n) on the x axis instead, so a true logarithmic cost is a straight
+line.
 
-bucket_map writes cost O(log m), where m is the number of orders at one price,
-and m <= n. `_hot` has m = n/8, so its curve should bend like log n on the
-linear axis, while `_uniform` and `_normal` have m of about 1 to 6, so their
-curves should be nearly flat.
+Most subplots draw all three workloads (uniform, normal, hot). The exception
+is bucket_map's insert/remove/update_quantity_only, whose true cost is
+O(log m), m the number of orders at one price (m <= n): `_uniform` and
+`_normal` keep m at about 1 to 6 regardless of n, which would just look flat
+and prove nothing about log(m), so those three panels draw `_hot` only, where
+m = n/32 scales with n and the log2(n) x axis doubles as a log2(m) axis up to
+that constant offset. The title says as much.
 """
 
 from __future__ import annotations
@@ -32,26 +35,32 @@ ROOT = Path(__file__).resolve().parents[1]
 CRITERION = ROOT / "target" / "criterion"
 OUT_DIR = ROOT / "plots"
 
-SIZES = (1_000, 4_000, 16_000, 64_000)  # SIZES in benches/order_book.rs; other sizes are leftovers of older runs
+SIZES = (1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 2_000_000)  # SIZES in benches/order_book.rs
+LINEAR_TICKS = (4_000, 64_000, 1_024_000, 2_000_000)  # sparser labels for linear-axis panels (all SIZES still plotted)
 WORKLOADS = ("uniform", "normal", "hot")
+COMPARISON_WORKLOADS = ("uniform", "normal")  # _hot excluded: this plot compares stores, not m vs n
+STORES = ("btree", "bucket_map")
+STORE_COLOR = {"btree": "#1b6ca8", "bucket_map": "#d95f02"}  # compare.png: color = implementation
+WORKLOAD_MARKER = {"uniform": "o", "normal": "s"}  # compare.png: marker shape = price distribution
 GROUP = re.compile(r"^(insert|update_quantity_only|remove|bids|asks)_(uniform|normal|hot)$")
 
-WORKLOAD_COLOR = {"uniform": "#1b6ca8", "normal": "#d95f02", "hot": "#2a9d55"}
+WORKLOAD_COLOR = {"uniform": "#1b6ca8", "normal": "#d95f02", "hot": "#2a9d55"}  # btree.png / bucket_map.png: color = workload
 OP_STYLE = {"bids": ("-", "o"), "asks": ("--", "s")}  # ops that share a subplot; the rest use ("-", "o")
+OP_LINESTYLE = {"bids": "-", "asks": "--"}  # compare.png: linestyle distinguishes ops sharing a panel
 
-# Subplots per store: (title, complexity, operations drawn in it)
+# Subplots per store: (title, complexity, operations drawn in it, workloads drawn in it)
 PANELS = {
     "btree": (
-        ("update_quantity_only: O(1)", "1", ("update_quantity_only",)),
-        ("insert: O(log n)", "log n", ("insert",)),
-        ("remove: O(log n)", "log n", ("remove",)),
-        ("bids/asks: O(n)", "n", ("bids", "asks")),
+        ("update_quantity_only: O(1)", "1", ("update_quantity_only",), WORKLOADS),
+        ("insert: O(log n)", "log n", ("insert",), WORKLOADS),
+        ("remove: O(log n)", "log n", ("remove",), WORKLOADS),
+        ("bids: O(n)", "n", ("bids",), WORKLOADS),
     ),
     "bucket_map": (
-        ("update_quantity_only: O(log m)", "log m", ("update_quantity_only",)),
-        ("insert: O(log m)", "log m", ("insert",)),
-        ("remove: O(log m)", "log m", ("remove",)),
-        ("bids/asks: O(n)", "n", ("bids", "asks")),
+        ("update_quantity_only: O(log m)", "log m", ("update_quantity_only",), ("hot",)),
+        ("insert: O(log m)", "log m", ("insert",), ("hot",)),
+        ("remove: O(log m)", "log m", ("remove",), ("hot",)),
+        ("bids: O(n)", "n", ("bids",), WORKLOADS),
     ),
 }
 
@@ -78,11 +87,90 @@ def load_points(store: str) -> dict[tuple[str, str], list[tuple[int, float]]]:
     return points
 
 
-def draw_panel(ax, title: str, complexity: str, ops: tuple[str, ...], points: dict[tuple[str, str], list[tuple[int, float]]]) -> None:
-    log_x = complexity == "log n"
+def load_comparison_points() -> dict[tuple[str, str, str], list[tuple[int, float]]]:
+    """(op, workload, store) -> [(n, median ns)] sorted by n, for both stores."""
+    points: dict[tuple[str, str, str], list[tuple[int, float]]] = defaultdict(list)
+    for store in STORES:
+        for estimates in CRITERION.glob(f"*/{store}/*/new/estimates.json"):
+            group, size_label = estimates.parts[-5], estimates.parts[-3]
+            match = GROUP.match(group)
+            if match is None or match.group(2) not in COMPARISON_WORKLOADS:
+                continue
+            try:
+                n = int(size_label.replace("_", ""))
+            except ValueError:
+                continue
+            if n not in SIZES:
+                continue
+            ns = json.loads(estimates.read_text())["median"]["point_estimate"]
+            points[(match.group(1), match.group(2), store)].append((n, ns))
+
+    for series in points.values():
+        series.sort()
+    return points
+
+
+# Comparison subplots: (title, operations drawn in it)
+COMPARISON_PANELS = (
+    ("update_quantity_only: btree O(1) vs bucket_map O(log m)", ("update_quantity_only",)),
+    ("insert: btree O(log n) vs bucket_map O(log m)", ("insert",)),
+    ("remove: btree O(log n) vs bucket_map O(log m)", ("remove",)),
+    ("bids: O(n) for both", ("bids",)),
+)
+
+
+def draw_comparison_panel(ax, title: str, ops: tuple[str, ...], points: dict[tuple[str, str, str], list[tuple[int, float]]]) -> None:
+    log_x = ops != ("bids",)  # bids' true O(n) stays on a linear axis so the line is straight
+    for op in ops:
+        linestyle = OP_LINESTYLE.get(op, "-")
+        for workload in COMPARISON_WORKLOADS:
+            marker = WORKLOAD_MARKER[workload]
+            for store in STORES:
+                pts = points.get((op, workload, store))
+                if not pts:
+                    continue
+                label = f"{store} / {workload}" if len(ops) == 1 else f"{op} / {store} / {workload}"
+                xs = [math.log2(n) if log_x else n for n, _ in pts]
+                ax.plot(xs, [t / 1_000.0 for _, t in pts], linestyle, marker=marker, color=STORE_COLOR[store], label=label)
+
+    if log_x:
+        ax.set_xticks([math.log2(n) for n in SIZES], [f"{n:,}" for n in SIZES])
+        ax.set_xlabel("book size n (log2 scale)")
+    else:
+        ax.set_xticks(LINEAR_TICKS, [f"{n:,}" for n in LINEAR_TICKS])
+        ax.set_xlabel("book size n")
+    ax.tick_params(axis="x", labelrotation=45)
+    ax.set_ylabel("median time (µs)")
+    ax.set_title(title)
+    ax.grid(True, which="both", linestyle=":")
+    ax.legend(fontsize=6)
+
+
+def plot_comparison() -> bool:
+    """Writes plots/compare.png: btree vs bucket_map overlaid, uniform + normal only."""
+    points = load_comparison_points()
+    if not points:
+        return False
+    fig, axes = plt.subplots(2, 2, figsize=(12, 9))
+    for ax, (title, ops) in zip(axes.flat, COMPARISON_PANELS):
+        draw_comparison_panel(ax, title, ops, points)
+    fig.suptitle("btree vs bucket_map (uniform & normal workloads)")
+    fig.tight_layout()
+    dest = OUT_DIR / "compare.png"
+    fig.savefig(dest, dpi=150)
+    plt.close(fig)
+    print(f"wrote {dest}")
+    return True
+
+
+def draw_panel(ax, title: str, complexity: str, ops: tuple[str, ...], workloads: tuple[str, ...], points: dict[tuple[str, str], list[tuple[int, float]]]) -> None:
+    # SIZES spans 1,000 to 2,000,000 (2000x), so a linear x axis would stack
+    # the small sizes on top of each other for the log-scaled complexities;
+    # `n` (bids' true O(n)) stays on a linear axis so the line is straight.
+    log_x = complexity != "n"
     for op in ops:
         style, marker = OP_STYLE.get(op, ("-", "o"))
-        for workload in WORKLOADS:
+        for workload in workloads:
             pts = points.get((op, workload))
             if not pts:
                 continue
@@ -91,12 +179,12 @@ def draw_panel(ax, title: str, complexity: str, ops: tuple[str, ...], points: di
             ax.plot(xs, [t / 1_000.0 for _, t in pts], style, marker=marker, color=WORKLOAD_COLOR[workload], label=label)
 
     if log_x:
-        ax.set_xticks([math.log2(n) for n in SIZES], [f"{math.log2(n):.1f}\n(n = {n:,})" for n in SIZES])
-        ax.set_xlabel("log2(book size n)")
+        ax.set_xticks([math.log2(n) for n in SIZES], [f"{n:,}" for n in SIZES])
+        ax.set_xlabel("book size n (log2 scale)")
     else:
-        ax.set_xticks(SIZES, [f"{n:,}" for n in SIZES])
-        ax.tick_params(axis="x", labelrotation=45)  # 1,000 and 4,000 are close on a linear axis
+        ax.set_xticks(LINEAR_TICKS, [f"{n:,}" for n in LINEAR_TICKS])
         ax.set_xlabel("book size n")
+    ax.tick_params(axis="x", labelrotation=45)
     ax.set_ylabel("median time (µs)")
     ax.set_title(title)
     ax.grid(True, which="both", linestyle=":")
@@ -109,9 +197,9 @@ def plot_store(store: str) -> bool:
     if not points:
         return False
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
-    for ax, (title, complexity, ops) in zip(axes.flat, PANELS[store]):
-        draw_panel(ax, title, complexity, ops, points)
-    fig.suptitle(store)
+    for ax, (title, complexity, ops, workloads) in zip(axes.flat, PANELS[store]):
+        draw_panel(ax, title, complexity, ops, workloads, points)
+    fig.suptitle("bucket_map (hot_dist, m = n/32)" if store == "bucket_map" else store)
     fig.tight_layout()
     dest = OUT_DIR / f"{store}.png"
     fig.savefig(dest, dpi=150)
@@ -134,6 +222,9 @@ def main() -> None:
     for store, ok in zip(PANELS, wrote):
         if not ok:
             print(f"skipped {store}: no results under {CRITERION}; run `cargo bench -- /{store}/` first")
+    wrote.append(plot_comparison())
+    if not wrote[-1]:
+        print(f"skipped compare.png: no results for {COMPARISON_WORKLOADS} under {CRITERION}")
     if not any(wrote):
         sys.exit("nothing to plot")
 

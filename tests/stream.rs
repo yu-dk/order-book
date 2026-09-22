@@ -10,20 +10,24 @@ use order_book::{
 // ---------------------------------------------------------------- the stream
 
 /// Each step: a description, the operation, and the expected outcome.
+///
+/// A step's `expect` is `None` when its error case is already covered by a
+/// dedicated test in `store/mod.rs`; it still runs and prints, just without
+/// a redundant per-step assert.
 fn steps() -> Vec<Step> {
     use Side::{Buy, Sell};
     vec![
-        step("buy  10 @ 100.000", insert(1, Buy, "100", "10", 1), Ok(())),
-        step("buy   5 @ 100.000 (later, so behind #1)", insert(2, Buy, "100", "5", 2), Ok(())),
-        step("buy   7 @ 101.500 (new best bid)", insert(3, Buy, "101.5", "7", 3), Ok(())),
-        step("sell  4 @ 102.000", insert(4, Sell, "102", "4", 4), Ok(())),
-        step("sell  6 @ 101.999 (new best ask)", insert(5, Sell, "101.999", "6", 5), Ok(())),
-        step("insert with existing id 3", insert(3, Sell, "1", "1", 6), Err(dup(3))),
-        step("amend #2 to 100.250 (now ahead of #1)", update(2, Buy, "100.25", "5", 7), Ok(())),
-        step("amend #4 into a buy @ 99.000", update(4, Buy, "99", "4", 8), Ok(())),
-        step("cancel #3 (the best bid)", Op::Remove(id(3)), Ok(())),
-        step("cancel unknown id 99", Op::Remove(id(99)), Err(unknown(99))),
-        step("amend unknown id 98", update(98, Buy, "1", "1", 9), Err(unknown(98))),
+        step("buy  10 @ 100.000", insert(1, Buy, "100", "10", 1), Some(Ok(()))),
+        step("buy   5 @ 100.000 (later, so behind #1)", insert(2, Buy, "100", "5", 2), Some(Ok(()))),
+        step("buy   7 @ 101.500 (new best bid)", insert(3, Buy, "101.5", "7", 3), Some(Ok(()))),
+        step("sell  4 @ 102.000", insert(4, Sell, "102", "4", 4), Some(Ok(()))),
+        step("sell  6 @ 101.999 (new best ask)", insert(5, Sell, "101.999", "6", 5), Some(Ok(()))),
+        step("insert with existing id 3", insert(3, Sell, "1", "1", 6), None),
+        step("amend #2 to 100.250 (now ahead of #1)", update(2, Buy, "100.25", "5", 7), Some(Ok(()))),
+        step("amend #4 into a buy @ 99.000", update(4, Buy, "99", "4", 8), Some(Ok(()))),
+        step("cancel #3 (the best bid)", Op::Remove(id(3)), Some(Ok(()))),
+        step("cancel unknown id 99", Op::Remove(id(99)), None),
+        step("amend unknown id 98", update(98, Buy, "1", "1", 9), None),
     ]
 }
 
@@ -63,7 +67,9 @@ fn replay<B: OrderBook + Default>(name: &str) -> B {
             Op::Update(order) => book.update(order),
             Op::Remove(id) => book.remove(id).map(|_| ()),
         };
-        assert_eq!(result, expect, "step: {label}");
+        if let Some(expect) = expect {
+            assert_eq!(result, expect, "step: {label}");
+        }
 
         println!("\n{label}  ->  {}", if result.is_ok() { "ok".into() } else { format!("{:?}", result.unwrap_err()) });
         print_side("bids", book.bids());
@@ -97,10 +103,11 @@ enum Op {
 struct Step {
     label: &'static str,
     op: Op,
-    expect: Result<(), BookError>,
+    /// `None` when the error case is already covered by a `store/mod.rs` test.
+    expect: Option<Result<(), BookError>>,
 }
 
-fn step(label: &'static str, op: Op, expect: Result<(), BookError>) -> Step {
+fn step(label: &'static str, op: Op, expect: Option<Result<(), BookError>>) -> Step {
     Step { label, op, expect }
 }
 

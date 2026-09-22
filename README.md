@@ -1,8 +1,11 @@
 # order-book
 
-A local in-memory store of buy and sell orders, kept in matching-engine priority so you can insert, amend, cancel, and read the full bid and ask books.
+A local orderbook implementation which handles a stream of order events and maintains the state of the orderbook.
 
-This is not an exchange: there is no matching, no trades, and no networking. It is the structure underneath those systems. Given a stream of new, amended, and cancelled limits, it maintains two sorted books.
+Assumptions:
+- No assumed RPS; the book is single-threaded.
+- Memory is not a constraint (32 bytes per order); we optimise for time.
+- In-memory only: no persistence or crash recovery. State lives for the process's lifetime.
 
 ## The problem
 
@@ -20,26 +23,44 @@ O = I \times S \times P \times Q \times T
 | \(Q\) | Quantity | \(\tfrac{1}{10^{6}}\mathbb{N}_{>0}\) |
 | \(T\) | Timestamp | \(\mathbb{N}_0\) |
 
-Prices and quantities are discrete, not floating-point money. The tick sizes are crate constants (`PRICE_TICK_DENOMINATOR = 1000`, `QUANTITY_TICK_DENOMINATOR = 10^6`). Price is stored as milli-ticks in \([-9\,999\,999, 9\,999\,999]\) — the open interval \((-10000, 10000)\) — and quantity as a positive count of \(10^{-6}\) units.
+Prices and quantities are discrete, not floating-point money. The tick sizes are constants (`PRICE_TICK_DENOMINATOR = 1000`, `QUANTITY_TICK_DENOMINATOR = 10^6`). Price is stored as milli-ticks in \([-9\,999\,999, 9\,999\,999]\) — the open interval \((-10000, 10000)\) — and quantity as a positive count of \(10^{-6}\) units.
 
 The store must support:
 
 - **`insert`** — add a new order; duplicate ids are rejected
 - **`update`** — if the id exists, replace \(S\), \(P\), \(Q\), and \(T\); priority follows the new values. Unknown ids error
 - **`remove`** — cancel by id
-- **`bids` / `asks`** — return every resting order on that side
+- **`bids` / `asks`** — return ordered orders on that side, the best bid and best ask are the first elements of those lists
 
 Resting orders are ordered by:
 1. Price (buys: highest first; sells: lowest first)
 2. Timestamp (earlier first)
 3. Order id (smaller first)
 
-The best bid and best ask are the first elements of those lists.
+## File structure
 
-## Implementations
+### Implementations
 
-Both stores implement `OrderBook`, so they can be swapped and checked against each other. They differ in how they find the best price and how they keep orders at one price in time order.
+Two implementations of `OrderBook` live in `src/store`:
 
+- `btree.rs` — the baseline. One `BTreeSet` per side, plus a `HashMap<OrderId, Order>` for O(1) lookup by id. Every insert/remove/reprice costs O(log n) over all orders on that side.
+- `bucket_map.rs` — the more advanced store. One small `BTreeMap` queue per price level, found through a bitset over the price grid. Insert/remove/reprice cost O(log m), where m is the number of orders at that price, independent of how many price levels or total orders exist.
+
+Both implementations satisfy the same trait, so they can be swapped in and checked against each other. A few implementation tradeoffs are highlighted in inline comments starting with `// TRADEOFF`.
+
+### Tests
+
+Unit tests (a shared behavioral suite plus per-implementation white-box tests) live in `src/store/mod.rs`, `src/store/btree.rs` and `src/store/bucket_map.rs`. An integration test replaying a realistic order stream against both stores is in `tests/stream.rs`.
+
+```sh
+cargo test
+```
+
+### Benches
+
+To verify the theoretical time complexity of each operation, we use Rust's benchmark harness to run experiments.
+
+See [BENCHMARKS.md](benches/BENCHMARKS.md) for details. Benchmark plots are in `plots/*.png`.
 
 ## Usage
 
@@ -59,11 +80,3 @@ book.insert(Order {
 let _bids = book.bids(); // all buys, best first
 let _asks = book.asks(); // all sells, best first
 ```
-
-## Tests and benches
-
-```sh
-cargo test
-```
-
-See [BENCHMARKS.md](benches/BENCHMARKS.md) for what is measured, how to plot it, and results.

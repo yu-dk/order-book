@@ -2,12 +2,6 @@
 //! 
 //! - Bids are keyed `(Reverse(price), timestamp, id)` and asks `(price,
 //!   timestamp, id)`.
-//!
-//! | Op | Cost |
-//! | --- | --- |
-//! | `insert` / `remove` | O(log n) |
-//! | `update` | O(log 1)  or  O(log n) 
-//! | `bids` / `asks` | O(k) for k orders returned |
 
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, HashMap};
@@ -21,7 +15,7 @@ type AskKey = (Price, Timestamp, OrderId);
 
 #[derive(Debug, Default, Clone)]
 pub struct BTreeOrderStore {
-    orders: HashMap<OrderId, Order>,
+    orders: HashMap<OrderId, Order>, // sole owner of the data.
     bids: BTreeSet<BidKey>,
     asks: BTreeSet<AskKey>,
 }

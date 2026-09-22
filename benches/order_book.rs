@@ -9,30 +9,29 @@ use rand::{rngs::StdRng, Rng, SeedableRng};
 use rand_distr::{Distribution, Normal};
 use std::num::NonZeroU64;
 
-/// Geometric sizes so a log–log plot can show the slope.
-const SIZES: &[u64] = &[1_000, 4_000, 16_000, 64_000];
+/// Geometric sizes so a log–log plot can show the slope, up to 2,000,000 to
+/// separate btree's O(log n) from bucket_map's O(log m) at realistic scale.
+const SIZES: &[u64] = &[1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 2_000_000];
 /// Operations timed back to back per batch. Small next to `SIZES`, so the book size stays close to `order_size`.
-const BATCH_SIZE: u64 = 16;
+const BATCH_SIZE: u64 = 32;
 
-/// Orders spread uniformly at random over 10,000 prices: buys on even `i`,
-/// sells on odd `i`, price a hash of `i`, ranges from -5,000 to 4,999
+/// Orders spread uniformly at random over 6,000 prices: buys on even `i`,
+/// sells on odd `i`, price a hash of `i`, ranges from -3,000 to 2,999
 fn sample_order_uniform(i: u64) -> Order {
     Order {
         id: NonZeroU64::new(i).unwrap(),
         side: if i % 2 == 0 { Side::Buy } else { Side::Sell },
-        price: Price::from_ticks(((i.wrapping_mul(2_654_435_761) >> 7) % 10_000) as i32 - 5_000).unwrap(),
+        price: Price::from_ticks(((i.wrapping_mul(2_654_435_761) >> 7) % 6_000) as i32 - 3_000).unwrap(),
         quantity: Quantity::from_ticks(1).unwrap(),
         timestamp: i as u64,
     }
 }
 
-/// Prices are normal (mean 100, sigma 2000 ticks), so the book is dense near
-/// the mean and thin in the tails. Otherwise like `sample_order_uniform`.
-///
-/// Orders per price at the mean, m = n/10_000: 0.1, 0.4, 1.6, 6.4 for
-/// n = 1k, 4k, 16k, 64k. It falls to x0.61 one sigma out and x0.14 two sigma out.
+/// Prices are normal (mean 100, sigma 1000 ticks), so the book is dense near
+/// the mean and thin in the tails. 
+/// 3σ (99.7%) gives about 6000 distinct ticks, close to real usage (googled)
 const NORMAL_MEAN: f64 = 100.0;
-const NORMAL_SIGMA: f64 = 2_000.0;
+const NORMAL_SIGMA: f64 = 1_000.0;
 fn sample_order_normal(i: u64) -> Order {
     let normal = Normal::new(NORMAL_MEAN, NORMAL_SIGMA).unwrap();
     let ticks = (normal.sample(&mut StdRng::seed_from_u64(i)).round() as i32).clamp(Price::MIN_TICKS, Price::MAX_TICKS);
@@ -45,15 +44,14 @@ fn sample_order_normal(i: u64) -> Order {
     }
 }
 
-/// Hot prices: same shape as `sample_order_uniform`, but every order lands on
-/// one of 4 prices per side, so each queue holds n/8 orders. Jitter cause orders arrive 
-/// with a timestamp earlier than the current tail of their queue.
+/// Hot prices: but every order lands on one of 16 prices per side, so each queue holds n/32 orders. 
+/// Jitter cause orders arrive with a timestamp earlier than the current tail of their queue.
 fn sample_order_hot(i: u64) -> Order {
     let jitter = i.wrapping_mul(2_654_435_761) >> 7 & 63;
     Order {
         id: NonZeroU64::new(i).unwrap(),
         side: if i % 2 == 0 { Side::Buy } else { Side::Sell },
-        price: Price::from_ticks((i % 8) as i32 - 4).unwrap(),
+        price: Price::from_ticks((i % 32) as i32 - 16).unwrap(),
         quantity: Quantity::from_ticks(1).unwrap(),
         timestamp: i + 64 - jitter,
     }

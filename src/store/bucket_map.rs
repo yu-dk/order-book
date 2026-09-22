@@ -4,9 +4,6 @@
 //! - Each price has a `BTreeMap` keyed `(timestamp, id)`, so a queue is always in
 //!   priority order and there are no links to maintain.
 //! - `index` maps an id to where its order lives, so cancels need no search.
-//! - A price that becomes empty only clears its bit. Its (empty) map stays in
-//!   `queues` and is reused when the price gets an order again, so a price
-//!   toggling between empty and non-empty does not allocate each time.
 //!
 //! | Op | Cost |
 //! | --- | --- |
@@ -117,6 +114,8 @@ impl BucketMapOrderStore {
         let queue = book.queues.get_mut(&loc.price_idx).expect("indexed order has a queue");
         let order = queue.remove(&(loc.timestamp, id)).expect("indexed order is queued");
         if queue.is_empty() {
+            // TRADEOFF: empty only clears its bit. Its empty map stays in `queues` and is reused when the price gets an order again, 
+            // it may allocate lots of memory in long term.
             book.bits.clear(loc.price_idx as usize); // the empty queue stays for reuse
         }
         Some(order)
