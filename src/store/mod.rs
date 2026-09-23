@@ -1,9 +1,11 @@
 pub mod btree;
+pub mod btree_memory;
 pub mod bucket_map;
 mod hier_bitset;
 pub mod level_map;
 
 pub use btree::BTreeOrderStore;
+pub use btree_memory::BTreeMemoryOrderStore;
 pub use bucket_map::BucketMapOrderStore;
 pub use level_map::LevelMapOrderStore;
 
@@ -189,6 +191,7 @@ mod tests {
     }
 
     book_tests!(btree, BTreeOrderStore);
+    book_tests!(btree_memory, BTreeMemoryOrderStore);
     book_tests!(bucket_map, BucketMapOrderStore);
     book_tests!(level_map, LevelMapOrderStore);
 
@@ -200,11 +203,14 @@ mod tests {
         let mut a = BTreeOrderStore::new();
         let mut d = BucketMapOrderStore::new();
         let mut l = LevelMapOrderStore::new();
+        let mut m = BTreeMemoryOrderStore::new();
         fill(&mut a);
+        fill(&mut m);
         fill(&mut d);
         fill(&mut l);
         assert_eq!(a.bids(), d.bids());
         assert_eq!(a.bids(), l.bids());
+        assert_eq!(a.bids(), m.bids());
     }
 
     /// Random insert/update/remove stream; all stores must agree at each step.
@@ -220,6 +226,7 @@ mod tests {
         let mut a = BTreeOrderStore::new();
         let mut d = BucketMapOrderStore::new();
         let mut l = LevelMapOrderStore::new();
+        let mut m = BTreeMemoryOrderStore::new();
         for _ in 0..5_000 {
             let n = rnd(40) + 1;
             let side = if rnd(2) == 0 { Side::Buy } else { Side::Sell };
@@ -228,23 +235,28 @@ mod tests {
                 0 => {
                     let r = a.insert(o.clone());
                     assert_eq!(r, d.insert(o.clone()));
-                    assert_eq!(r, l.insert(o));
+                    assert_eq!(r, l.insert(o.clone()));
+                    assert_eq!(r, m.insert(o));
                 }
                 1 => {
                     let r = a.update(o.clone());
                     assert_eq!(r, d.update(o.clone()));
-                    assert_eq!(r, l.update(o));
+                    assert_eq!(r, l.update(o.clone()));
+                    assert_eq!(r, m.update(o));
                 }
                 _ => {
                     let r = a.remove(id(n));
                     assert_eq!(r, d.remove(id(n)));
                     assert_eq!(r, l.remove(id(n)));
+                    assert_eq!(r, m.remove(id(n)));
                 }
             }
             assert_eq!(a.bids(), d.bids());
             assert_eq!(a.asks(), d.asks());
             assert_eq!(a.bids(), l.bids());
             assert_eq!(a.asks(), l.asks());
+            assert_eq!(a.bids(), m.bids());
+            assert_eq!(a.asks(), m.asks());
         }
     }
 }

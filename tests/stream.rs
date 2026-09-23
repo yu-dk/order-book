@@ -4,7 +4,7 @@
 //!     cargo test --test stream -- --nocapture
 
 use order_book::{
-    BTreeOrderStore, BookError, BucketMapOrderStore, LevelMapOrderStore, Order, OrderBook, OrderId, Price, Quantity, Side,
+    BTreeMemoryOrderStore, BTreeOrderStore, BookError, BucketMapOrderStore, LevelMapOrderStore, Order, OrderBook, OrderId, Price, Quantity, Side,
 };
 
 // ---------------------------------------------------------------- the stream
@@ -40,6 +40,12 @@ const FINAL_ASKS: [u64; 1] = [5];
 #[test]
 fn replay_on_btree_store() {
     let book = replay::<BTreeOrderStore>("BTreeOrderStore");
+    assert_eq!((ids(book.bids()), ids(book.asks())), (FINAL_BIDS.to_vec(), FINAL_ASKS.to_vec()));
+}
+
+#[test]
+fn replay_on_btree_memory_store() {
+    let book = replay::<BTreeMemoryOrderStore>("BTreeMemoryOrderStore");
     assert_eq!((ids(book.bids()), ids(book.asks())), (FINAL_BIDS.to_vec(), FINAL_ASKS.to_vec()));
 }
 

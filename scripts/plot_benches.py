@@ -8,16 +8,17 @@ distance between sizes is proportional to n. O(log n) and O(log m) subplots
 plot log2(n) on the x axis instead, so a true logarithmic cost is a straight
 line.
 
-Most subplots draw all three workloads (uniform, normal, hot). The exception
-is bucket_map's insert/remove/update_quantity, whose true cost is
-O(log m), m the number of orders at one price (m <= n): `_uniform` and
-`_normal` keep m at about 1 to 6 regardless of n, which would just look flat
-and prove nothing about log(m), so those three panels draw `_hot` only, where
+btree runs all three workloads (uniform, normal, hot) and its subplots draw
+them all. bucket_map runs normal and hot only. Its insert/remove/update_quantity
+cost O(log m), m the number of orders at one price (m <= n): `_normal` keeps
+m at about 1 to 6 regardless of n, which would just look flat and prove
+nothing about log(m), so those three panels draw `_hot` only, where
 m = n/32 scales with n and the log2(n) x axis doubles as a log2(m) axis up to
 that constant offset. The title says as much.
 
-Also writes plots/compare.png with every store in STORES overlaid (uniform +
-normal), including level_map, which has no per-store plot.
+Also writes plots/compare.png with every store in STORES overlaid on the
+normal workload, the one every store runs. btree_memory and level_map have no
+per-store plot.
 """
 
 from __future__ import annotations
@@ -41,15 +42,13 @@ OUT_DIR = ROOT / "plots"
 SIZES = (1_000, 4_000, 16_000, 64_000, 256_000, 1_024_000, 2_000_000)  # SIZES in benches/order_book.rs
 LINEAR_TICKS = (4_000, 64_000, 1_024_000, 2_000_000)  # sparser labels for linear-axis panels (all SIZES still plotted)
 WORKLOADS = ("uniform", "normal", "hot")
-COMPARISON_WORKLOADS = ("uniform", "normal")  # _hot excluded: this plot compares stores, not m vs n
-STORES = ("btree", "bucket_map", "level_map")
-STORE_COLOR = {"btree": "#1b6ca8", "bucket_map": "#d95f02", "level_map": "#2a9d55"}  # compare.png: color = implementation
-WORKLOAD_MARKER = {"uniform": "o", "normal": "s"}  # compare.png: marker shape = price distribution
-GROUP = re.compile(r"^(insert|update_quantity|remove|bids|asks)_(uniform|normal|hot)$")
+COMPARISON_WORKLOADS = ("normal",)  # the one workload every store runs
+STORES = ("btree", "btree_memory", "bucket_map", "level_map")
+STORE_COLOR = {"btree": "#1b6ca8", "btree_memory": "#7b3fa0", "bucket_map": "#d95f02", "level_map": "#2a9d55"}  # compare.png: color = implementation
+WORKLOAD_MARKER = {"normal": "o"}  # compare.png: marker shape = price distribution
+GROUP = re.compile(r"^(insert|update_quantity|remove|bids)_(uniform|normal|hot)$")
 
 WORKLOAD_COLOR = {"uniform": "#1b6ca8", "normal": "#d95f02", "hot": "#2a9d55"}  # btree.png / bucket_map.png: color = workload
-OP_STYLE = {"bids": ("-", "o"), "asks": ("--", "s")}  # ops that share a subplot; the rest use ("-", "o")
-OP_LINESTYLE = {"bids": "-", "asks": "--"}  # compare.png: linestyle distinguishes ops sharing a panel
 
 # Subplots per store: (title, complexity, operations drawn in it, workloads drawn in it)
 PANELS = {
@@ -63,7 +62,7 @@ PANELS = {
         ("update_quantity: O(log m)", "log m", ("update_quantity",), ("hot",)),
         ("insert: O(log m)", "log m", ("insert",), ("hot",)),
         ("remove: O(log m)", "log m", ("remove",), ("hot",)),
-        ("bids: O(n)", "n", ("bids",), WORKLOADS),
+        ("bids: O(n)", "n", ("bids",), ("normal", "hot")),
     ),
 }
 
@@ -121,9 +120,9 @@ def load_comparison_points() -> dict[tuple[str, str, str], list[tuple[int, float
 
 # Comparison subplots: (title, operations drawn in it)
 COMPARISON_PANELS = (
-    ("update_quantity: btree O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("update_quantity",)),
-    ("insert: btree O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("insert",)),
-    ("remove: btree O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("remove",)),
+    ("update_quantity: btree(_memory) O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("update_quantity",)),
+    ("insert: btree(_memory) O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("insert",)),
+    ("remove: btree(_memory) O(log n), bucket_map O(log m),\nlevel_map O(log L + log m)", ("remove",)),
     ("bids: O(n) for all", ("bids",)),
 )
 
@@ -131,7 +130,6 @@ COMPARISON_PANELS = (
 def draw_comparison_panel(ax, title: str, ops: tuple[str, ...], points: dict[tuple[str, str, str], list[tuple[int, float]]]) -> None:
     log_x = ops != ("bids",)  # bids' true O(n) stays on a linear axis so the line is straight
     for op in ops:
-        linestyle = OP_LINESTYLE.get(op, "-")
         for workload in COMPARISON_WORKLOADS:
             marker = WORKLOAD_MARKER[workload]
             for store in STORES:
@@ -140,7 +138,7 @@ def draw_comparison_panel(ax, title: str, ops: tuple[str, ...], points: dict[tup
                     continue
                 label = f"{store} / {workload}" if len(ops) == 1 else f"{op} / {store} / {workload}"
                 xs = [math.log2(n) if log_x else n for n, _ in pts]
-                ax.plot(xs, [t / 1_000.0 for _, t in pts], linestyle, marker=marker, color=STORE_COLOR[store], label=label)
+                ax.plot(xs, [t / 1_000.0 for _, t in pts], "-", marker=marker, color=STORE_COLOR[store], label=label)
 
     if log_x:
         ax.set_xticks([math.log2(n) for n in SIZES], [f"{n:,}" for n in SIZES])
@@ -156,14 +154,14 @@ def draw_comparison_panel(ax, title: str, ops: tuple[str, ...], points: dict[tup
 
 
 def plot_comparison() -> bool:
-    """Writes plots/compare.png: every store overlaid, uniform + normal only."""
+    """Writes plots/compare.png: every store overlaid, normal workload only."""
     points = load_comparison_points()
     if not points:
         return False
     fig, axes = plt.subplots(2, 2, figsize=(12, 9))
     for ax, (title, ops) in zip(axes.flat, COMPARISON_PANELS):
         draw_comparison_panel(ax, title, ops, points)
-    fig.suptitle(f"{' vs '.join(STORES)} (uniform & normal workloads)")
+    fig.suptitle(f"{' vs '.join(STORES)} (normal workload)")
     fig.tight_layout()
     dest = OUT_DIR / "compare.png"
     fig.savefig(dest, dpi=150)
@@ -178,14 +176,13 @@ def draw_panel(ax, title: str, complexity: str, ops: tuple[str, ...], workloads:
     # `n` (bids' true O(n)) stays on a linear axis so the line is straight.
     log_x = complexity != "n"
     for op in ops:
-        style, marker = OP_STYLE.get(op, ("-", "o"))
         for workload in workloads:
             pts = points.get((op, workload))
             if not pts:
                 continue
             label = workload if len(ops) == 1 else f"{op} / {workload}"
             xs = [math.log2(n) if log_x else n for n, _ in pts]
-            ax.plot(xs, [t / 1_000.0 for _, t in pts], style, marker=marker, color=WORKLOAD_COLOR[workload], label=label)
+            ax.plot(xs, [t / 1_000.0 for _, t in pts], "-", marker="o", color=WORKLOAD_COLOR[workload], label=label)
 
     if log_x:
         ax.set_xticks([math.log2(n) for n in SIZES], [f"{n:,}" for n in SIZES])

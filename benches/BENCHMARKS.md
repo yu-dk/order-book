@@ -2,25 +2,34 @@
 
 ## Setup
 
-Each benchmark runs on a preloaded book of \(n \in \{1000, 4000, 16000, 64000, 256000, 1024000, 2000000\}\) orders(warm cache), for `btree`, `bucket_map` and `level_map`, with three price distributions:
+Each benchmark runs on a preloaded book of \(n \in \{1000, 4000, 16000, 64000, 256000, 1024000, 2000000\}\) orders (warm cache). There are three price distributions:
 
 - `_uniform` — orders spread uniformly at random over 6,000 prices.
 - `_normal` — prices are normal (mean 100, sigma 1,000 ticks), so the book is dense near the mean and thin in the tails. 3σ (99.7%) covers about 6,000 distinct ticks, close to real usage.
 - `_hot` — every order lands on one of 16 prices per side, so each queue holds \(n/32\) orders. Jitter causes some orders to arrive with a timestamp earlier than the current tail of their queue.
 
-`insert`, `update` and `remove` run on a book that stays at about \(n\) orders. `bids` and `asks` read a preloaded book of \(n\) orders. `BATCH_SIZE` is defined in `benches/order_book.rs`:
+Not every store runs every distribution:
+
+| Store | Distributions |
+|---|---|
+| `btree` | `_uniform`, `_normal`, `_hot` (baseline) |
+| `bucket_map` | `_normal`, `_hot` (`_hot` shows its \(O(\log m)\) cost) |
+| `btree_memory`, `level_map` | `_normal` |
+
+`insert`, `update` and `remove` run on a book that stays at about \(n\) orders. `bids` reads a preloaded book of \(n\) orders. `BATCH_SIZE` is defined in `benches/order_book.rs`:
 
 | Operation | Group name | How it is timed |
 |---|---|---|
 | `insert` | `insert_<workload>` | Each batch times `BATCH_SIZE` inserts of fresh samples of the workload (new ids, so new prices), then cancels the `BATCH_SIZE` oldest orders |
 | `update` | `update_quantity_<workload>` | Each batch times `BATCH_SIZE` updates of random live orders that keep side and price but change the quantity and get a new, later timestamp, so each order moves to the back of its queue. Every store handles an update as a remove plus an insert, whatever fields change, so this measures the full update cost. |
 | `remove` | `remove_<workload>` | Each batch times `BATCH_SIZE` cancels of the oldest orders, then inserts `BATCH_SIZE` fresh samples. |
-| `bids`, `asks` | `bids_<workload>`, `asks_<workload>` | One full read of that side of the book. |
+| `bids` | `bids_<workload>` | One full read of the buy side. `asks` is not benched: it mirrors `bids`. |
 
 ## Command and output
 ```sh
 cargo bench
 cargo bench --bench order_book -- /btree/
+cargo bench --bench order_book -- /btree_memory/
 cargo bench --bench order_book -- /bucket_map/
 cargo bench --bench order_book -- /level_map/
 ```
@@ -35,13 +44,13 @@ To draw the plots:
 python3 -m pip install -r scripts/requirements-plot.txt
 python3 scripts/plot_benches.py
 ```
-That reads `target/criterion/<op>_<workload>/<store>/<n>/new/estimates.json` and writes `plots/*.png`.
+That reads `target/criterion/<op>_<workload>/<store>/<n>/new/estimates.json` and writes `plots/*.png`. `compare.png` overlays every store on `_normal` only.
 
 ## Time complexity
 
 \(n\) is the number of orders in the book, \(m\) the number of orders at one price, \(L\) the number of prices that have orders. Hash map lookups are \(O(1)\) (expected) and are included in every cost.
 
-| Operation | `btree` | `bucket_map` | `level_map` |
+| Operation | `btree`, `btree_memory` | `bucket_map` | `level_map` |
 |---|---|---|---|
 | `insert` | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |
 | `update` | \(O(\log n)\) | \(O(\log m)\) | \(O(\log L + \log m)\) |

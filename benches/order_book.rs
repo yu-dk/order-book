@@ -4,7 +4,7 @@ use criterion::{
     black_box, criterion_group, criterion_main, BenchmarkGroup, BenchmarkId, Criterion,
     measurement::WallTime,
 };
-use order_book::{BTreeOrderStore, BucketMapOrderStore, LevelMapOrderStore, Order, OrderBook, Price, Quantity, Side};
+use order_book::{BTreeMemoryOrderStore, BTreeOrderStore, BucketMapOrderStore, LevelMapOrderStore, Order, OrderBook, Price, Quantity, Side};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use rand_distr::{Distribution, Normal};
 use std::num::NonZeroU64;
@@ -63,11 +63,9 @@ struct Workload {
     order: fn(u64) -> Order,
 }
 
-const WORKLOADS: &[Workload] = &[
-    Workload { suffix: "_uniform", order: sample_order_uniform },
-    Workload { suffix: "_normal", order: sample_order_normal },
-    Workload { suffix: "_hot", order: sample_order_hot },
-];
+const UNIFORM: Workload = Workload { suffix: "_uniform", order: sample_order_uniform };
+const NORMAL: Workload = Workload { suffix: "_normal", order: sample_order_normal };
+const HOT: Workload = Workload { suffix: "_hot", order: sample_order_hot };
 
 /// Book of `order_size` orders (ids `1..=order_size`). Built with a little spare capacity (fill
 /// then cancel a few extra ids) so a cloned template does not have to grow its
@@ -199,7 +197,8 @@ fn bench_remove<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Work
     group.finish();
 }
 
-/// Full read of the buy side of a preloaded book.
+/// Full read of the buy side of a preloaded book. `asks` is not benched: it
+/// mirrors `bids` in every store.
 fn bench_bids<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Workload) {
     let mut group = group(c, &format!("bids{}", w.suffix));
     for &order_size in SIZES {
@@ -209,30 +208,25 @@ fn bench_bids<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Worklo
     group.finish();
 }
 
-/// Same for the sell side.
-fn bench_asks<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Workload) {
-    let mut group = group(c, &format!("asks{}", w.suffix));
-    for &order_size in SIZES {
-        let book: B = preload(order_size, w.order);
-        group.bench_with_input(BenchmarkId::new(store, order_size), &order_size, |b, _| b.iter(|| black_box(book.asks())));
-    }
-    group.finish();
-}
-
 fn bench_store<B: OrderBook + Default>(c: &mut Criterion, store: &str, w: &Workload) {
     bench_insert::<B>(c, store, w);
     bench_update_quantity::<B>(c, store, w);
     bench_remove::<B>(c, store, w);
     bench_bids::<B>(c, store, w);
-    bench_asks::<B>(c, store, w);
 }
 
+/// `_normal` is the common workload every store runs. `btree` also runs
+/// `_uniform` and `_hot` as the baseline; `bucket_map` also runs `_hot`, where
+/// m = n/32 grows with n and shows its O(log m) cost.
 fn bench_all(c: &mut Criterion) {
-    for w in WORKLOADS {
+    for w in [&UNIFORM, &NORMAL, &HOT] {
         bench_store::<BTreeOrderStore>(c, "btree", w);
-        bench_store::<BucketMapOrderStore>(c, "bucket_map", w);
-        bench_store::<LevelMapOrderStore>(c, "level_map", w);
     }
+    for w in [&NORMAL, &HOT] {
+        bench_store::<BucketMapOrderStore>(c, "bucket_map", w);
+    }
+    bench_store::<BTreeMemoryOrderStore>(c, "btree_memory", &NORMAL);
+    bench_store::<LevelMapOrderStore>(c, "level_map", &NORMAL);
 }
 
 criterion_group!(benches, bench_all);

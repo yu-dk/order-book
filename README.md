@@ -41,9 +41,11 @@ Resting orders are ordered by:
 
 ### Implementations
 
-Three implementations of `OrderBook` live in `src/store`:
+Four implementations of `OrderBook` live in `src/store`:
 
 **Baseline: `btree.rs`.** One `BTreeMap<(price, timestamp, id), Order>` per side (bids use `Reverse(price)`), plus a `HashMap<OrderId, Locator>` that keeps each order's side, price and timestamp so its key can be rebuilt and it can be removed in O(log n). We used Rust's B-tree instead of red-black binary tree.
+
+**Baseline, memory-optimised: `btree_memory.rs`.** Same design, but each side is a `BTreeSet<OrderByPriority>`: the order is its own key, so price, timestamp and id aren't stored twice
 
 **Price-level stores.** We tested two other implementations to see whether splitting the book by price beats one big tree at large n., grouping by price also suits common order-book queries such as best price and per-level totals (not benchmarked here). It first finds the order's price level, then works on the m orders queued there, in a `BTreeMap` keyed by (timestamp, id) that holds the orders themselves.
 
